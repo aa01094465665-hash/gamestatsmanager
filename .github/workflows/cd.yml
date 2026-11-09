@@ -1,0 +1,62 @@
+name: Deploy to Local Computer
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types:
+      - completed
+    branches:
+      - main
+
+jobs:
+  deploy:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: self-hosted
+
+    steps:
+      - name: Login to Docker Hub
+        shell: powershell
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          $env:DOCKERHUB_TOKEN | docker login -u $env:DOCKERHUB_USERNAME --password-stdin
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker Hub login failed"
+          }
+
+      - name: Pull Latest Image
+        shell: powershell
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+        run: |
+          docker pull "$($env:DOCKERHUB_USERNAME)/gamestatsmanager:latest"
+          if ($LASTEXITCODE -ne 0) {
+            throw "Docker image pull failed"
+          }
+
+      - name: Replace Existing Container
+        shell: powershell
+        run: |
+          $existing = docker ps -aq --filter "name=^/gamestatsmanager$"
+
+          if ($existing) {
+            docker stop gamestatsmanager
+            docker rm gamestatsmanager
+          }
+
+          docker run -d `
+            --name gamestatsmanager `
+            --restart unless-stopped `
+            -p 8000:8000 `
+            "$($env:DOCKERHUB_USERNAME)/gamestatsmanager:latest"
+
+          if ($LASTEXITCODE -ne 0) {
+            throw "Container deployment failed"
+          }
+
+      - name: Check Container
+        shell: powershell
+        run: |
+          docker ps --filter "name=gamestatsmanager"
+          docker logs --tail 30 gamestatsmanager
